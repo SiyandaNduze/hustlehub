@@ -1,0 +1,147 @@
+name: CI
+
+# Runs on every push and pull request. Every job must pass for the pipeline to be green:
+# any failing test, lint rule, audit finding or container problem fails the run.
+on:
+  push:
+    branches: [main, develop, 'feature/**', 'fix/**']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend - static analysis, unit tests, audit
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      JWT_SECRET: ci-only-secret-not-used-anywhere-else
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Static analysis (ESLint + eslint-plugin-security, zero warnings allowed)
+        run: npm run lint:report
+
+      - name: Backend unit tests (tax, ledger, logging, lockout, sanitisation, storage)
+        run: npm run test:unit
+
+      - name: Dependency vulnerability audit (production deps, fail on high/critical)
+        run: npm run audit:prod
+
+      - name: Upload static analysis report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eslint-report
+          path: reports/eslint-report.txt
+          if-no-files-found: ignore
+
+  frontend:
+    name: Frontend - tests, build, audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Frontend tests (Vitest + Testing Library)
+        run: npm test
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Dependency vulnerability audit (production deps, fail on high/critical)
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: client/dist
+
+  docker-stack:
+    name: Docker - build, run full stack, API + security tests
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Create .env for the stack (ephemeral secrets)
+        run: |
+          echo "JWT_SECRET=$(openssl rand -hex 48)" >> .env
+          echo "ADMIN_PASSWORD=AdminPass123" >> .env
+
+      - name: Build backend and frontend images
+        run: docker compose build
+
+      - name: Start the whole stack and wait until both containers are healthy
+        run: docker compose up -d --wait --wait-timeout 180
+
+      - name: Show running containers
+        run: docker compose ps
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install test tooling (Newman)
+        run: npm ci
+
+      - name: Run the 94-request Postman/Newman suite against the containers
+        run: npm run test:api:docker
+
+      - name: Upload Newman report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-report
+          path: reports/newman-docker-report.html
+          if-no-files-found: ignore
+
+      - name: Collect container logs
+        if: always()
+        run: docker compose logs --no-color > container-logs.txt
+
+      - name: Upload container logs (evidence of structured logging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-logs
+          path: container-logs.txt
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+  ci-passed:
+    name: All checks passed
+    needs: [backend, frontend, docker-stack]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Backend, frontend and Docker stack checks all passed."

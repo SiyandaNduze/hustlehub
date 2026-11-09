@@ -1,0 +1,14 @@
+node_modules
+client
+logs
+reports
+tests
+postman
+docs
+.git
+.github
+.env
+certs/*.pem
+src/data/*.json
+npm-debug.log*
+*.md

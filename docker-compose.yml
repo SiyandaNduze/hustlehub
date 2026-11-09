@@ -1,0 +1,68 @@
+# HustleHub+ stack: React (nginx, HTTPS) -> Express API (HTTPS).
+#   docker compose up -d --build --wait      then open https://localhost:8443
+# Secrets come from .env (see .env.example). Only the frontend is published to the host;
+# the API is reachable only on the internal network (nginx proxies /api to it).
+name: hustlehub
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hustlehub-backend:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "5443"
+      TRUST_PROXY: "1"
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@hustlehub.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-50}
+      BOOKING_RATE_LIMIT_MAX: ${BOOKING_RATE_LIMIT_MAX:-10}
+      LOCKOUT_MAX_FAILURES: ${LOCKOUT_MAX_FAILURES:-5}
+      LOCKOUT_MINUTES: ${LOCKOUT_MINUTES:-15}
+      CURRENCY: ${CURRENCY:-ZAR}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_HTTP_URL: ${LOG_HTTP_URL:-}
+      LOG_HTTP_TOKEN: ${LOG_HTTP_TOKEN:-}
+    volumes:
+      - hustlehub-data:/data
+      - hustlehub-logs:/logs
+      - hustlehub-certs:/app/certs
+    expose:
+      - "5443"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    image: hustlehub-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8443:443"
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  hustlehub-data:
+  hustlehub-logs:
+  hustlehub-certs:
