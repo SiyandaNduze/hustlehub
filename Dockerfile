@@ -1,11 +1,11 @@
 # ---- HustleHub API (Node + Express over HTTPS) --------------------------------
-FROM node:22-alpine AS deps
+FROM node:26-alpine AS deps
 WORKDIR /app
 COPY package*.json ./
 # Production dependencies only. `npm ci` when a lockfile exists (reproducible), else `npm install`.
 RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 
-FROM node:22-alpine
+FROM node:26-alpine
 # openssl: the entrypoint creates a self-signed certificate on first start
 RUN apk add --no-cache openssl
 ENV NODE_ENV=production \
